@@ -6,10 +6,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Leemos la clave secreta y el modo debug desde las variables de entorno (.env)
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'clave-por-defecto-desarrollo')
-DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
+DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('1','true','yes','on')
 
-# Permitimos cualquier host local para que funcione sin problemas dentro de Docker
-ALLOWED_HOSTS = ['*']
+# Hosts permitidos leídos desde .env (separados por coma) con valores locales por defecto
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,web').split(',') if h.strip()]
+# Uso strip para quitar los espacios en blanco alrededor de cada host
 
 # Aplicaciones de Django + nuestra app 'reservas' donde irá toda la lógica de FlySwap
 INSTALLED_APPS = [
@@ -37,8 +38,8 @@ ROOT_URLCONF = 'flyswap.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
+        'DIRS': [BASE_DIR / 'templates'], # Directorio base para templates compartidos
+        'APP_DIRS': True, # Busca templates dentro de cada app
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.debug',
@@ -79,7 +80,7 @@ MONGO_DB = os.environ.get('MONGO_DB', 'flyswap_logs')
 
 NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
 NEO4J_USER = os.environ.get('NEO4J_USER', 'neo4j')
-NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD', 'flyswap1234')
+NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD', 'password-por-defecto')
 
 # Idioma y zona horaria de España
 LANGUAGE_CODE = 'es-es'
@@ -88,4 +89,5 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+STATICFILES_DIRS = [BASE_DIR / 'static'] # Directorio base para archivos estáticos como css o bootstrap
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

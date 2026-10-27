@@ -8,6 +8,9 @@ __pycache__/
 venv/
 .venv/
 
+# Si alguno desplegaramos en local se crearia esta carpeta y no conviene subir los datos
+datos_sql/
+
 # Copias de seguridad y presentaciones sueltas
 *.bak
 *.odp
