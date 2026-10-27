@@ -1,0 +1,5 @@
+# Librerías básicas que necesitamos para conectar Django con las bases de datos
+Django==5.1.2
+redis==5.2.0
+pymongo==4.10.1
+neo4j==5.26.0

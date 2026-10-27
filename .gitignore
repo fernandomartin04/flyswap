@@ -1,0 +1,15 @@
+# Variables de entorno reales (nunca se suben a GitHub por seguridad)
+.env
+
+# Archivos temporales de Python y Django
+__pycache__/
+*.py[cod]
+*.sqlite3
+venv/
+.venv/
+
+# Copias de seguridad y presentaciones sueltas
+*.bak
+*.odp
+*.pptx
+Presentacion_*.pdf

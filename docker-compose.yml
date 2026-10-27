@@ -1,0 +1,78 @@
+services:
+  # 1. Servicio principal Web con Django + SQLite (base de datos principal)
+  web:
+    build: .
+    container_name: flyswap_web
+    restart: unless-stopped
+    # Cargamos las variables de entorno y contraseñas desde el archivo .env
+    env_file:
+      - .env
+    ports:
+      # Puerto 8000 para entrar a la web desde el navegador (http://localhost:8000)
+      - "8000:8000"
+    volumes:
+      # Sincroniza nuestra carpeta local con el contenedor para ver cambios al momento
+      - .:/app
+      # Volumen para guardar la base de datos SQLite y que no se borre al apagar Docker
+      - sqlite_data:/app/datos_sql
+    depends_on:
+      - redis
+      - mongo
+      - neo4j
+    networks:
+      - flyswap_net
+
+  # 2. Servicio de Redis (para caché de búsquedas, códigos OTP y bloqueo temporal con TTL)
+  redis:
+    image: redis:7-alpine
+    container_name: flyswap_redis
+    restart: unless-stopped
+    ports:
+      # Puerto estándar de Redis expuesto por si queremos entrar con redis-cli
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - flyswap_net
+
+  # 3. Servicio de MongoDB (para guardar el registro de actividad y sacar estadísticas del dashboard)
+  mongo:
+    image: mongo:7
+    container_name: flyswap_mongo
+    restart: unless-stopped
+    ports:
+      # Puerto estándar de MongoDB (27017)
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - flyswap_net
+
+  # 4. Servicio de Neo4j (para el grafo de relaciones Usuario-Vuelo-Destino y recomendaciones)
+  neo4j:
+    image: neo4j:5
+    container_name: flyswap_neo4j
+    restart: unless-stopped
+    environment:
+      # Usuario y contraseña que hemos puesto en el .env (formato usuario/contraseña)
+      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
+    ports:
+      # 7474 es para abrir Neo4j Browser en el navegador y 7687 es el puerto Bolt para conectar desde Python
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - flyswap_net
+
+# Volúmenes administrados por Docker para que los datos persistan aunque hagamos 'docker compose down'
+volumes:
+  sqlite_data:
+  redis_data:
+  mongo_data:
+  neo4j_data:
+
+    # Red interna para que Django pueda hablar con 'redis', 'mongo' y 'neo4j' directamente por su nombre
+networks:
+  flyswap_net:
+    driver: bridge
