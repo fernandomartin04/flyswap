@@ -1,0 +1,27 @@
+{% extends 'reservas/base.html' %}
+
+{% block content %}
+<div class="card" style="max-width:450px; margin:0 auto;">
+    <h2>Iniciar Sesión en FlySwap</h2>
+    <form method="post" action="{% url 'login_usuario' %}">
+        {% csrf_token %}
+        <div style="margin-bottom:12px;">
+            <label style="font-size:0.85rem; font-weight:600;">Nombre de usuario</label>
+            <input type="text" name="username" required autofocus>
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="font-size:0.85rem; font-weight:600;">Contraseña</label>
+            <input type="password" name="password" required>
+        </div>
+        <button type="submit" class="btn" style="width:100%; padding:10px;">Entrar</button>
+    </form>
+
+    <div style="margin-top:16px; background:#f8fafc; border:1px solid #e2e8f0; padding:12px; border-radius:6px; font-size:0.85rem; color:#475569;">
+        <strong>Usuarios de prueba listos:</strong><br>
+        • <code>fernando</code> / <code>1234</code><br>
+        • <code>alfonso</code> / <code>1234</code><br>
+        • <code>josemaria</code> / <code>1234</code><br>
+        • <code>admin</code> / <code>1234</code>
+    </div>
+</div>
+{% endblock %}

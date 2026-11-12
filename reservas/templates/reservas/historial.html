@@ -1,0 +1,100 @@
+{% extends 'reservas/base.html' %}
+
+{% block content %}
+<div class="card">
+    <h2>Mi Historial de Operaciones ({{ user.username }})</h2>
+    <p style="color:#475569;">Consulta de forma directa tus reservas compradas, tus ventas cerradas y tus anuncios activos.</p>
+
+    <h3 style="margin-top:20px;">1. Mis Compras Realizadas ({{ mis_compras|length }})</h3>
+    {% if mis_compras %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID Operación</th>
+                    <th>Localizador</th>
+                    <th>Vuelo</th>
+                    <th>Vendedor</th>
+                    <th>Importe Pagado (Cesión + Cambio)</th>
+                    <th>Fecha Operación</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for op in mis_compras %}
+                <tr>
+                    <td>#{{ op.id }}</td>
+                    <td><strong>{{ op.reserva.localizador }}</strong></td>
+                    <td>{{ op.reserva.vuelo.codigo_vuelo }} ({{ op.reserva.vuelo.origen }} &rarr; {{ op.reserva.vuelo.destino }})</td>
+                    <td>{{ op.vendedor.username }}</td>
+                    <td><strong style="color:#0284c7;">{{ op.importe_pagado }} €</strong></td>
+                    <td>{{ op.fecha_operacion|date:"d/m/Y H:i" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p style="color:#64748b;">Aún no has adquirido ninguna reserva.</p>
+    {% endif %}
+
+    <h3 style="margin-top:28px;">2. Mis Ventas Cerradas ({{ mis_ventas|length }})</h3>
+    {% if mis_ventas %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID Operación</th>
+                    <th>Localizador</th>
+                    <th>Vuelo</th>
+                    <th>Comprador</th>
+                    <th>Cobrado (Cesión)</th>
+                    <th>Total Operación</th>
+                    <th>Fecha Operación</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for op in mis_ventas %}
+                <tr>
+                    <td>#{{ op.id }}</td>
+                    <td><strong>{{ op.reserva.localizador }}</strong></td>
+                    <td>{{ op.reserva.vuelo.codigo_vuelo }} ({{ op.reserva.vuelo.origen }} &rarr; {{ op.reserva.vuelo.destino }})</td>
+                    <td>{{ op.comprador.username }}</td>
+                    <td><strong style="color:#16a34a;">{{ op.reserva.precio_cesion }} €</strong></td>
+                    <td>{{ op.importe_pagado }} €</td>
+                    <td>{{ op.fecha_operacion|date:"d/m/Y H:i" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p style="color:#64748b;">Todavía no has cerrado ninguna venta.</p>
+    {% endif %}
+
+    <h3 style="margin-top:28px;">3. Mis Reservas Actualmente en Venta ({{ mis_reservas_activas|length }})</h3>
+    {% if mis_reservas_activas %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Localizador</th>
+                    <th>Vuelo</th>
+                    <th>Fecha Salida</th>
+                    <th>Precio Cesión</th>
+                    <th>Total para el Comprador</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in mis_reservas_activas %}
+                <tr>
+                    <td><a href="{% url 'detalle_reserva' r.id %}"><strong>{{ r.localizador }}</strong></a></td>
+                    <td>{{ r.vuelo.codigo_vuelo }} ({{ r.vuelo.origen }} &rarr; {{ r.vuelo.destino }})</td>
+                    <td>{{ r.vuelo.fecha_salida|date:"d/m/Y H:i" }}</td>
+                    <td>{{ r.precio_cesion }} €</td>
+                    <td>{{ r.precio_total_comprador }} €</td>
+                    <td><span class="badge-ahorro">{{ r.estado }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p style="color:#64748b;">No tienes reservas pendientes de vender ahora mismo.</p>
+    {% endif %}
+</div>
+{% endblock %}

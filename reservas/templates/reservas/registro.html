@@ -1,0 +1,23 @@
+{% extends 'reservas/base.html' %}
+
+{% block content %}
+<div class="card" style="max-width:450px; margin:0 auto;">
+    <h2>Crear Cuenta en FlySwap</h2>
+    <form method="post" action="{% url 'registro_usuario' %}">
+        {% csrf_token %}
+        <div style="margin-bottom:12px;">
+            <label style="font-size:0.85rem; font-weight:600;">Nombre de usuario</label>
+            <input type="text" name="username" required>
+        </div>
+        <div style="margin-bottom:12px;">
+            <label style="font-size:0.85rem; font-weight:600;">Correo electrónico</label>
+            <input type="email" name="email" required>
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="font-size:0.85rem; font-weight:600;">Contraseña</label>
+            <input type="password" name="password" required>
+        </div>
+        <button type="submit" class="btn" style="width:100%; padding:10px;">Registrarme</button>
+    </form>
+</div>
+{% endblock %}
