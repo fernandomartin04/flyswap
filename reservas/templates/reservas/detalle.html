@@ -34,13 +34,47 @@
                     {% if user.is_authenticated %}
                         {% if user == reserva.vendedor %}
                             <p style="color:#64748b; font-size:0.9rem;">Esta reserva la has publicado tú.</p>
-                        {% else %}
+                        {% elif redis_caido %}
+                            {# Sin Redis no hay bloqueo ni OTP: no dejamos comprar #}
+                            <p style="color:#b91c1c; font-size:0.9rem;">
+                                El servicio de verificación (Redis) no está disponible. Inténtalo en unos minutos.
+                            </p>
+                        {% elif lock_ajeno_segundos %}
+                            {# Bloqueo de Redis en manos de otro usuario: mostramos su TTL #}
+                            <p style="color:#b45309; font-weight:600;">
+                                🔒 Otro usuario está comprando esta reserva.
+                                Quedará libre en {{ lock_ajeno_segundos }} segundos si no la confirma.
+                            </p>
+                        {% elif lock_mio %}
+                            {# Paso 2: el bloqueo es nuestro, pedimos el código OTP #}
+                            <p style="font-size:0.9rem; color:#166534;">
+                                🔒 Reserva bloqueada para ti ({{ lock_segundos }} s restantes).
+                                Introduce el código de 6 dígitos para confirmar.
+                            </p>
                             <form method="post" action="{% url 'comprar_reserva' reserva.id %}">
                                 {% csrf_token %}
+                                <input type="text" name="otp" maxlength="6" inputmode="numeric" pattern="[0-9]{6}"
+                                       autocomplete="one-time-code" placeholder="Código OTP (6 dígitos)" required
+                                       style="margin-bottom:10px; letter-spacing:4px; text-align:center;">
                                 <button type="submit" class="btn btn-success" style="width:100%; padding:12px;">
                                     Confirmar compra y cambio de titular ({{ reserva.precio_total_comprador }} €)
                                 </button>
                             </form>
+                            <form method="post" action="{% url 'cancelar_compra' reserva.id %}" style="margin-top:8px;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-secondary" style="width:100%;">Cancelar y liberar la reserva</button>
+                            </form>
+                        {% else %}
+                            {# Paso 1: bloquear la reserva 3 minutos y generar el OTP #}
+                            <form method="post" action="{% url 'iniciar_compra' reserva.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success" style="width:100%; padding:12px;">
+                                    Iniciar compra ({{ reserva.precio_total_comprador }} €)
+                                </button>
+                            </form>
+                            <p style="color:#64748b; font-size:0.85rem; margin-top:6px;">
+                                La reserva quedará bloqueada para ti 3 minutos y recibirás un código de confirmación.
+                            </p>
                         {% endif %}
                     {% else %}
                         <a href="{% url 'login_usuario' %}" class="btn" style="width:100%; text-align:center;">

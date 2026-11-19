@@ -59,3 +59,30 @@ docker compose ps
 
 * **Web (Django):** http://localhost:8000
 * **Neo4j Browser:** http://localhost:7474
+
+---
+
+## ⚡ Parte 1 — Integración con Redis (`reservas/redis_service.py`)
+
+Todo el acceso a Redis está en `reservas/redis_service.py`; `views.py` solo llama a sus funciones.
+
+| Uso | Clave | Comando / TTL |
+| :--- | :--- | :--- |
+| Caché de búsquedas | `cache:busqueda:<origen>:<destino>` (minúsculas) | `SET ... EX 120` · se invalida con `SCAN` + `DEL` al publicar o comprar |
+| Bloqueo de compra | `lock:reserva:<id>` → `user_id` | `SET ... NX EX 180` (atómico) · se libera con un script Lua solo si el lock es tuyo |
+| Código OTP | `otp:compra:<reserva_id>:<user_id>` | 6 dígitos con `secrets`, `EX 180` |
+| Intentos fallidos | `otp:intentos:<reserva_id>:<user_id>` | `INCR` · al 5º fallo se libera la reserva |
+
+**Flujo de compra (F5) en dos pasos:**
+1. **Iniciar compra** (`POST /reserva/<id>/iniciar-compra/`): bloquea la reserva 3 minutos y muestra el OTP en pantalla (simulado, sin SMS/email). Si otro usuario la tiene bloqueada, se le muestran los segundos restantes (`TTL`).
+2. **Confirmar** (`POST /reserva/<id>/comprar/`): comprueba que el lock es tuyo y que el OTP es correcto. Después ejecuta la compra en SQL (`transaction.atomic()` + `select_for_update()`) y borra el lock, el OTP y la caché.
+3. **Cancelar** (`POST /reserva/<id>/cancelar-compra/`): libera el bloqueo.
+
+**Tolerancia a fallos:** si Redis cae, el buscador sigue funcionando contra SQL (lo indica en pantalla) y publicar funciona con normalidad. La compra se bloquea con un aviso claro, porque sin lock ni OTP no se puede garantizar.
+
+**Demostración rápida:**
+1. Busca "Sevilla" dos veces: la primera indica *SQL* y la segunda *caché Redis*.
+2. Con `josemaria`, pulsa *Iniciar compra* en una reserva de `fernando`. En otro navegador, entra como `alfonso` en esa misma reserva: aparece bloqueada con su TTL.
+3. Ver las claves en Redis: `docker exec -it flyswap_redis redis-cli --scan` y `docker exec -it flyswap_redis redis-cli TTL lock:reserva:<id>`.
+4. Introduce el OTP: la compra se completa y la reserva desaparece del buscador.
+5. `docker stop flyswap_redis`: la web sigue funcionando, pero no se puede comprar. Después, `docker start flyswap_redis`.
