@@ -26,7 +26,19 @@
 
 <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h3 style="margin:0;">Reservas disponibles ({{ reservas|length }})</h3>
+        <div>
+            <h3 style="margin:0;">Reservas disponibles ({{ reservas|length }})</h3>
+            {# Indicador discreto de dónde salen los datos (para demostrar la caché de Redis) #}
+            <small style="color:#64748b;">
+                {% if origen_datos == 'redis' %}
+                    ⚡ Resultado servido desde caché Redis
+                {% elif origen_datos == 'sql' %}
+                    🗄️ Resultado consultado en SQL (guardado en caché Redis durante {{ ttl_cache }} s)
+                {% else %}
+                    🗄️ Resultado consultado en SQL (caché Redis no disponible)
+                {% endif %}
+            </small>
+        </div>
         {% if user.is_authenticated %}
             <a href="{% url 'publicar_reserva' %}" class="btn">+ Publicar mi reserva</a>
         {% endif %}
@@ -50,21 +62,21 @@
                 {% for r in reservas %}
                 <tr>
                     <td>
-                        <strong>{{ r.vuelo.codigo_vuelo }}</strong><br>
-                        <small style="color:#64748b;">{{ r.vuelo.aerolinea }} · Asiento {{ r.asiento }}</small>
+                        <strong>{{ r.codigo_vuelo }}</strong><br>
+                        <small style="color:#64748b;">{{ r.aerolinea }} · Asiento {{ r.asiento }}</small>
                     </td>
-                    <td><strong>{{ r.vuelo.origen }} &rarr; {{ r.vuelo.destino }}</strong></td>
-                    <td>{{ r.vuelo.fecha_salida|date:"d/m/Y H:i" }}</td>
-                    <td>{{ r.vendedor.username }}</td>
-                    <td><span class="precio-tachado">{{ r.vuelo.precio_original }} €</span></td>
+                    <td><strong>{{ r.origen }} &rarr; {{ r.destino }}</strong></td>
+                    <td>{{ r.fecha_salida|date:"d/m/Y H:i" }}</td>
+                    <td>{{ r.vendedor }}</td>
+                    <td><span class="precio-tachado">{{ r.precio_original }} €</span></td>
                     <td>
-                        {{ r.precio_cesion }} € + {{ r.vuelo.precio_cambio_nombre }} €<br>
+                        {{ r.precio_cesion }} € + {{ r.precio_cambio_nombre }} €<br>
                         <small style="color:#64748b;">(tasa cambio nombre)</small>
                     </td>
                     <td>
-                        <strong style="font-size:1.05rem; color:#0284c7;">{{ r.precio_total_comprador }} €</strong><br>
-                        {% if r.ahorro_comprador > 0 %}
-                            <span class="badge-ahorro">Ahorras {{ r.ahorro_comprador }} €</span>
+                        <strong style="font-size:1.05rem; color:#0284c7;">{{ r.precio_total }} €</strong><br>
+                        {% if r.ahorro > 0 %}
+                            <span class="badge-ahorro">Ahorras {{ r.ahorro }} €</span>
                         {% endif %}
                     </td>
                     <td>

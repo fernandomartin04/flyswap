@@ -4,6 +4,7 @@ from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from django.utils import timezone
 from reservas.models import Vuelo, Reserva, Operacion
+from reservas import redis_service
 
 
 class Command(BaseCommand):
@@ -113,3 +114,7 @@ class Command(BaseCommand):
 
         self.stdout.write("-> Operaciones históricas creadas: 2")
         self.stdout.write(self.style.SUCCESS("¡Base de datos SQL poblada con éxito!"))
+
+        # 6. REDIS: vaciamos la caché de búsquedas para que no muestre datos de la carga anterior
+        borradas = redis_service.invalidar_cache_busquedas()
+        self.stdout.write(f"-> Redis: caché de búsquedas vaciada ({borradas} claves borradas)")

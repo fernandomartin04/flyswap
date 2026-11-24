@@ -7,78 +7,234 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from .models import Vuelo, Reserva, Operacion
+from . import redis_service
 
 
 # =========================================================================
-# F3: PÁGINA PRINCIPAL Y BUSCADOR DE RESERVAS DISPONIBLES
+# AYUDANTES PARA LA CACHÉ DE BÚSQUEDAS (Redis)
+# En la caché no podemos guardar objetos de Django, solo texto (JSON).
+# Por eso convertimos cada reserva en un diccionario "plano" con lo que
+# necesita la tabla de inicio.html. Usamos el MISMO formato tanto si los datos
+# vienen de SQL como de Redis, así la plantilla no tiene que distinguirlos.
+# =========================================================================
+def _reserva_a_fila(r):
+    return {
+        'id': r.id,
+        'codigo_vuelo': r.vuelo.codigo_vuelo,
+        'aerolinea': r.vuelo.aerolinea,
+        'asiento': r.asiento,
+        'origen': r.vuelo.origen,
+        'destino': r.vuelo.destino,
+        'fecha_salida': r.vuelo.fecha_salida,
+        'vendedor': r.vendedor.username,
+        'precio_original': r.vuelo.precio_original,
+        'precio_cesion': r.precio_cesion,
+        'precio_cambio_nombre': r.vuelo.precio_cambio_nombre,
+        'precio_total': r.precio_total_comprador,
+        'ahorro': r.ahorro_comprador,
+    }
+
+
+def _fila_desde_cache(fila):
+    # Al leer de Redis los importes y la fecha llegan como texto:
+    # los volvemos a convertir a Decimal y datetime para que la plantilla
+    # pueda comparar (ahorro > 0) y formatear la fecha (|date) igual que antes.
+    for campo in ('precio_original', 'precio_cesion', 'precio_cambio_nombre', 'precio_total', 'ahorro'):
+        fila[campo] = Decimal(fila[campo])
+    fila['fecha_salida'] = parse_datetime(fila['fecha_salida'])
+    return fila
+
+
+# =========================================================================
+# F3: PÁGINA PRINCIPAL Y BUSCADOR DE RESERVAS DISPONIBLES (con caché Redis)
 # =========================================================================
 def inicio(request):
     # Recogemos lo que el usuario haya escrito en los filtros del buscador (por GET)
     origen_q = request.GET.get('origen', '').strip()
     destino_q = request.GET.get('destino', '').strip()
 
-    # Consulta básica en SQL: traemos las reservas DISPONIBLES de vuelos futuros en una sola consulta
-    reservas = Reserva.objects.select_related('vuelo', 'vendedor').filter(
-        estado='DISPONIBLE',
-        vuelo__fecha_salida__gt=timezone.now(),
-    )
+    # 1) Primero preguntamos a Redis si esta búsqueda ya está cacheada (cache HIT)
+    filas_cache = redis_service.obtener_busqueda_cache(origen_q, destino_q)
 
-    # Si el usuario filtró por origen o destino, aplicamos el filtro (icontains ignora mayúsculas/minúsculas)
-    if origen_q:
-        reservas = reservas.filter(vuelo__origen__icontains=origen_q)
-    if destino_q:
-        reservas = reservas.filter(vuelo__destino__icontains=destino_q)
+    if filas_cache is not None:
+        reservas = [_fila_desde_cache(f) for f in filas_cache]
+        origen_datos = 'redis'
+    else:
+        # 2) Cache MISS: consulta básica en SQL de las reservas DISPONIBLES de vuelos futuros
+        consulta = Reserva.objects.select_related('vuelo', 'vendedor').filter(
+            estado='DISPONIBLE',
+            vuelo__fecha_salida__gt=timezone.now(),
+        )
 
-    # Ordenamos por fecha de salida del vuelo más próxima
-    reservas = reservas.order_by('vuelo__fecha_salida')
+        # Si el usuario filtró por origen o destino, aplicamos el filtro (icontains ignora mayúsculas/minúsculas)
+        if origen_q:
+            consulta = consulta.filter(vuelo__origen__icontains=origen_q)
+        if destino_q:
+            consulta = consulta.filter(vuelo__destino__icontains=destino_q)
+
+        # Ordenamos por fecha de salida del vuelo más próxima
+        reservas = [_reserva_a_fila(r) for r in consulta.order_by('vuelo__fecha_salida')]
+
+        # 3) Guardamos el resultado en Redis con TTL para las siguientes búsquedas iguales.
+        # Si Redis está caído, guardar devuelve False y lo indicamos en pantalla (la web sigue funcionando).
+        if redis_service.guardar_busqueda_cache(origen_q, destino_q, reservas):
+            origen_datos = 'sql'
+        else:
+            origen_datos = 'sql_sin_redis'
 
     contexto = {
         'reservas': reservas,
         'origen_q': origen_q,
         'destino_q': destino_q,
+        'origen_datos': origen_datos,
+        'ttl_cache': redis_service.TTL_CACHE_BUSQUEDA,
     }
     return render(request, 'reservas/inicio.html', contexto)
 
 
 # =========================================================================
-# F4: CONSULTAR DETALLE DE UNA RESERVA
+# F4: CONSULTAR DETALLE DE UNA RESERVA (+ estado del bloqueo en Redis)
 # =========================================================================
 def detalle_reserva(request, reserva_id):
     # Buscamos la reserva por su ID (si no existe devuelve error 404)
     reserva = get_object_or_404(Reserva.objects.select_related('vuelo', 'vendedor'), id=reserva_id)
-    return render(request, 'reservas/detalle.html', {'reserva': reserva})
+
+    # Consultamos en Redis si alguien está comprando esta reserva ahora mismo,
+    # para mostrar el botón adecuado (iniciar compra, introducir OTP o "bloqueada")
+    lock_mio = False
+    lock_segundos = 0
+    redis_caido = False
+    if reserva.estado == 'DISPONIBLE' and request.user.is_authenticated:
+        try:
+            lock_mio, lock_segundos = redis_service.estado_lock(reserva.id, request.user.id)
+        except redis_service.RedisNoDisponible:
+            redis_caido = True
+
+    contexto = {
+        'reserva': reserva,
+        'lock_mio': lock_mio,
+        # Bloqueada por OTRO usuario: hay segundos restantes pero el bloqueo no es nuestro
+        'lock_ajeno_segundos': lock_segundos if (lock_segundos and not lock_mio) else 0,
+        'lock_segundos': lock_segundos,
+        'redis_caido': redis_caido,
+    }
+    return render(request, 'reservas/detalle.html', contexto)
 
 
 # =========================================================================
-# F5: ADQUIRIR RESERVA (COMPRA / CESIÓN SIMULADA CON TRANSACCIÓN SQL)
+# F5 (paso 1): INICIAR COMPRA -> BLOQUEO TEMPORAL EN REDIS + CÓDIGO OTP
+# =========================================================================
+def _motivo_no_comprable(reserva, usuario):
+    # Mismas comprobaciones de negocio que hace la compra en SQL.
+    # Las hacemos también aquí para no bloquear ni generar OTP de algo que no se puede comprar.
+    if reserva.estado != 'DISPONIBLE':
+        return 'Esta reserva ya no está disponible.'
+    if reserva.vuelo.fecha_salida <= timezone.now():
+        return 'No se puede comprar una reserva de un vuelo que ya ha salido.'
+    if reserva.vendedor == usuario:
+        return 'No puedes comprar una reserva que has publicado tú mismo.'
+    return None
+
+
+@login_required(login_url='login_usuario')
+def iniciar_compra(request, reserva_id):
+    # Cambia estado (crea un bloqueo), así que solo se permite por POST
+    if request.method != 'POST':
+        return redirect('detalle_reserva', reserva_id=reserva_id)
+
+    reserva = get_object_or_404(Reserva.objects.select_related('vuelo', 'vendedor'), id=reserva_id)
+
+    motivo = _motivo_no_comprable(reserva, request.user)
+    if motivo:
+        messages.error(request, motivo)
+        return redirect('detalle_reserva', reserva_id=reserva.id)
+
+    try:
+        # SET lock:reserva:<id> <user_id> NX EX 180
+        conseguido, segundos = redis_service.adquirir_lock(reserva.id, request.user.id)
+        if not conseguido:
+            messages.error(
+                request,
+                f'Otro usuario está comprando esta reserva ahora mismo. Inténtalo de nuevo en {segundos} segundos.'
+            )
+            return redirect('detalle_reserva', reserva_id=reserva.id)
+
+        codigo = redis_service.generar_otp(reserva.id, request.user.id)
+    except redis_service.RedisNoDisponible:
+        # Sin Redis no podemos garantizar el bloqueo ni el OTP, así que preferimos no vender
+        messages.error(request, 'El servicio de verificación no está disponible ahora mismo. Inténtalo en unos minutos.')
+        return redirect('detalle_reserva', reserva_id=reserva.id)
+
+    # Proyecto académico sin SMS/email real: mostramos el OTP en pantalla para poder introducirlo
+    messages.info(
+        request,
+        f'Reserva bloqueada para ti durante {segundos // 60} minutos. '
+        f'Tu código de confirmación (simulado, en producción llegaría por SMS/email) es: {codigo}'
+    )
+    return redirect('detalle_reserva', reserva_id=reserva.id)
+
+
+@login_required(login_url='login_usuario')
+def cancelar_compra(request, reserva_id):
+    # El usuario se arrepiente: liberamos el bloqueo para que otros puedan comprarla ya
+    if request.method == 'POST':
+        redis_service.limpiar_proceso_compra(reserva_id, request.user.id)
+        messages.info(request, 'Has cancelado la compra. La reserva vuelve a estar libre para otros usuarios.')
+    return redirect('detalle_reserva', reserva_id=reserva_id)
+
+
+# =========================================================================
+# F5 (paso 2): CONFIRMAR COMPRA CON OTP -> TRANSACCIÓN SQL
 # =========================================================================
 @login_required(login_url='login_usuario')
 def comprar_reserva(request, reserva_id):
     if request.method != 'POST':
         return redirect('detalle_reserva', reserva_id=reserva_id)
 
-    # Usamos transacción atómica y select_for_update() para evitar que dos usuarios la compren a la vez
+    codigo_introducido = request.POST.get('otp', '')
+
+    # --- 1) Comprobaciones en Redis: el bloqueo debe ser nuestro y el OTP correcto ---
+    try:
+        lock_mio, _ = redis_service.estado_lock(reserva_id, request.user.id)
+        if not lock_mio:
+            messages.error(request, 'Tu bloqueo de 3 minutos ha caducado o no has iniciado la compra. Pulsa "Iniciar compra" de nuevo.')
+            return redirect('detalle_reserva', reserva_id=reserva_id)
+
+        resultado, intentos_restantes = redis_service.validar_otp(reserva_id, request.user.id, codigo_introducido)
+    except redis_service.RedisNoDisponible:
+        messages.error(request, 'El servicio de verificación no está disponible ahora mismo. Inténtalo en unos minutos.')
+        return redirect('detalle_reserva', reserva_id=reserva_id)
+
+    if resultado == 'CADUCADO':
+        messages.error(request, 'El código ha caducado. Pulsa "Iniciar compra" para recibir uno nuevo.')
+        return redirect('detalle_reserva', reserva_id=reserva_id)
+    if resultado == 'INCORRECTO':
+        messages.error(request, f'Código incorrecto. Te quedan {intentos_restantes} intentos.')
+        return redirect('detalle_reserva', reserva_id=reserva_id)
+    if resultado == 'AGOTADO':
+        # Demasiados fallos: liberamos la reserva para no tenerla secuestrada
+        redis_service.limpiar_proceso_compra(reserva_id, request.user.id)
+        messages.error(request, 'Has superado el número de intentos. La compra se ha cancelado y la reserva se ha liberado.')
+        return redirect('detalle_reserva', reserva_id=reserva_id)
+
+    # --- 2) OTP correcto: compra en SQL (fuente de verdad) ---
+    # Usamos transacción atómica y select_for_update() para evitar que dos usuarios la compren a la vez.
+    # El lock de Redis ya evita casi todos los choques; SQL es la última barrera
+    # (además Operacion.reserva es OneToOne, así que una reserva nunca puede venderse dos veces).
     with transaction.atomic():
         reserva = get_object_or_404(
             Reserva.objects.select_for_update().select_related('vuelo', 'vendedor'),
             id=reserva_id,
         )
 
-        # Comprobación 1: Que la reserva siga disponible
-        if reserva.estado != 'DISPONIBLE':
-            messages.error(request, 'Esta reserva ya no está disponible.')
-            return redirect('inicio')
-
-        # Comprobación 2: Que el vuelo no haya salido ya
-        if reserva.vuelo.fecha_salida <= timezone.now():
-            messages.error(request, 'No se puede comprar una reserva de un vuelo que ya ha salido.')
-            return redirect('inicio')
-
-        # Comprobación 3: Un usuario no puede comprarse a sí mismo su propia reserva
-        if reserva.vendedor == request.user:
-            messages.error(request, 'No puedes comprar una reserva que has publicado tú mismo.')
-            return redirect('detalle_reserva', reserva_id=reserva.id)
+        # Comprobaciones 1, 2 y 3: disponible, vuelo no salido y no autocompra
+        motivo = _motivo_no_comprable(reserva, request.user)
+        if motivo:
+            redis_service.limpiar_proceso_compra(reserva_id, request.user.id)
+            messages.error(request, motivo)
+            return redirect('detalle_reserva', reserva_id=reserva_id)
 
         reserva.estado = 'VENDIDA'
         reserva.save()
@@ -90,6 +246,11 @@ def comprar_reserva(request, reserva_id):
             comprador=request.user,
             importe_pagado=reserva.precio_total_comprador,
         )
+
+    # --- 3) Compra cerrada en SQL: limpiamos Redis ---
+    # Borramos lock + OTP y vaciamos la caché, porque esta reserva ya no debe salir en los listados
+    redis_service.limpiar_proceso_compra(reserva_id, request.user.id)
+    redis_service.invalidar_cache_busquedas()
 
     messages.success(
         request,
@@ -180,6 +341,9 @@ def publicar_reserva(request):
             precio_cesion=precio_cesion,
             estado='DISPONIBLE',
         )
+
+        # Hay una reserva nueva: las búsquedas cacheadas en Redis ya no están completas, las borramos
+        redis_service.invalidar_cache_busquedas()
 
         messages.success(request, f'Reserva {localizador} publicada correctamente.')
         return redirect('inicio')
